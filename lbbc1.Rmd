@@ -1,0 +1,308 @@
+---
+title: "Survived Titanic Passenger Prediction with Logistic Model and KNN"
+author: "Rahma Fairuz Rania"
+date: '2022-07-09'
+output: 
+ html_document:
+   toc: true
+   toc_float: true
+   highlight: zenburn
+   df_print: paged
+   theme: flatly
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Case : From data titanic passenger, we want to know does passenger still alive or not. Data can be downloaded here https://www.kaggle.com/c/titanic
+
+# Import Data
+
+```{r}
+titanic_train <- read.csv('train.csv')
+titanic_test <- read.csv('test.csv')
+head(titanic_train)
+#head(titanic_test)
+```
+
+# Data Wrangling
+
+To make easier, combine data train and test into 1 dataframe
+
+```{r, warning=FALSE, message=FALSE}
+library(dplyr)
+titanic_test$Survived <- NA
+
+titanic <- rbind(titanic_train, titanic_test) %>% 
+    mutate(Survived = as.factor(Survived))
+```
+
+- Check structure of data
+
+```{r}
+str(titanic)
+```
+
+Here are some information about columns in wholesale data
+* `PassengerId`: Id number of passenger
+* `Survived` : Passenger Survival or Not
+* `Pclass` :  A proxy for socio-economic status (SES). 1st = Upper, 2nd = Middle, 3rd = Lower
+* `Name` : Name of Passenger
+* `Sex` : Sex of Passenger 
+* `Age` : Age of Passenger
+* `SibSp` : Sibling = brother, sister, stepbrother, stepsister; Spouse = husband, wife (mistresses and fiancés were ignored)
+* `Parch` :  Parent = mother, father; Child = daughter, son, stepdaughter, stepson; Some children travelled only with a nanny, therefore parch=0 for them.
+* `Ticket` : Ticket number
+* `Fare` : Passenger fare
+* `Cabin` : Cabin number
+* `Embarked` : Port of Embarkation 
+
+- Check proportion 
+
+```{r}
+prop.table(table(titanic$Survived))
+```
+Our data has balance enough.
+
+- Balancing class proportion with downsampling
+
+```{r}
+# downsampling
+RNGkind(sample.kind = "Rounding")
+set.seed(100)
+library(caret)
+titanic <- downSample(x = titanic %>% 
+                           select(-Survived),
+                          y = titanic$Survived,
+                         yname = "Survived") #nama kolom target
+
+head(titanic)
+```
+
+```{r}
+#cek proporsi diab_train
+prop.table(table(titanic$Survived))
+```
+Our data has balance proportion
+
+- Check missing value
+
+```{r}
+anyNA(titanic)
+```
+
+```{r}
+# remove missing value
+titanic <- titanic %>% na.omit()
+anyNA(titanic)
+```
+
+# Cross Validation
+
+Give proportion to data train 80% and 20% to data test. Proportion data train bigger than data test because we want our model learn more.
+
+```{r, warning=FALSE, message=FALSE}
+RNGkind(sample.kind = "Rounding")
+set.seed(100)
+
+# index sampling
+index <- sample(x = nrow(titanic), 
+                size = nrow(titanic)*0.8)
+
+# splitting
+titanic_train <- titanic[index,] 
+titanic_test <- titanic[-index,]
+```
+
+- Check data train proportion
+
+```{r}
+prop.table(table(titanic_train$Survived))
+```
+Our data class proportion is balance enough.
+
+# Data Pre-processing
+
+### Logistic Regression
+
+- Build model with predictors Pclass, Sex, Age, SibSp, Parch, and Embarked
+
+```{r, warning=FALSE, message=FALSE}
+model_logistic <- glm(formula = Survived ~ Pclass + Sex + Age + SibSp + Parch + Embarked,
+                   data = titanic,
+                   family = "binomial")
+```
+
+
+- Summary model
+
+```{r}
+summary(model_logistic)
+```
+
+Log of odds value from logistic model can't be interpreted, we should convert it into Odds.
+
+```{r}
+exp(model_logistic$coefficients)
+```
+
+We can explain how each variable significant to prediction. According to model summary, passenger in Pclass 2 2.81 times more likely survived. Passenger with parent or children 9.56 times more likely survived.
+
+- Feature Selection
+
+Choose significant variable to our model
+
+```{r}
+model_step <- step(model_logistic, direction = 'backward', trace = F)
+summary(model_step)
+```
+
+- Predict data test 
+
+```{r}
+titanic_test$predict_value <- predict(object = model_step,
+                      newdata = titanic_test,
+                      type = "response")
+```
+
+Predict result type probability, transform it into label according to target variable(Survived) 
+
+```{r}
+unique(titanic_test$Survived)
+```
+
+```{r}
+titanic_test$pred_label <- ifelse(test = titanic_test$predict_value > 0.5,
+                                yes = "1",
+                                no = "0")
+
+titanic_test$pred_label <- as.factor(titanic_test$pred_label)
+head(titanic_test)
+```
+
+- Model evaluation with confusionMatrix from library caret
+
+```{r}
+library(caret)
+confusionMatrix(data = titanic_test$pred_label,
+                reference = titanic_test$Survived,
+                positive = "1")
+```
+Logistic model has 78% accuracy, 78% sensitivity, 77% specificity, and 83% precision. Next, we want to compare this model with another model (K-Nearest Neighbor) to see which model better in predict.
+
+### K-Nearest Neighbor
+
+- Data cleaning, we just use numerical column
+
+```{r}
+titanic_clean <- titanic %>% select(-c(Name, Sex, Ticket, Fare, Cabin, Embarked))
+```
+
+- Check class proportion
+
+```{r}
+prop.table(table(titanic_clean$Survived))
+```
+- Cross validation
+
+```{r, warning=FALSE, message=FALSE}
+RNGkind(sample.kind = "Rounding")
+set.seed(257)
+
+# data train 80%
+index <- sample(x = nrow(titanic_clean), 
+                size = nrow(titanic_clean)*0.8)
+
+# splitting
+titanic_train_for_knn <- titanic_clean[index, ]
+titanic_test_for_knn <-  titanic_clean[-index, ]
+
+prop.table(table(titanic_train_for_knn$Survived)) # recheck class proportion
+```
+Our data is balance enough
+
+- Before we build KNN model, we should split target and predictor in both data train and data test.
+
+```{r}
+# predictor train
+titanic_train_predictor <- titanic_train_for_knn %>% 
+  select(-Survived)
+
+# target train
+titanic_train_target <- titanic_train_for_knn %>% 
+  pull(Survived) 
+
+
+# predictor test
+titanic_test_predictor <- titanic_test_for_knn %>% 
+  select(-Survived)
+
+# taget test
+titanic_test_target <- titanic_test_for_knn %>% 
+  pull(Survived)
+```
+
+- Scale data train predictor for range standarization of variable predictor
+
+```{r}
+titanic_train_predictor_scale <- titanic_train_predictor %>% 
+  scale()
+```
+
+```{r}
+titanic_test_predictor_scale <- titanic_test_predictor %>% 
+  scale(center = attr(titanic_train_predictor_scale,"scaled:center"),
+        scale = attr(titanic_train_predictor_scale,"scaled:scale"))
+```
+
+- Predict with knn() from library class
+
+Finding k optimum
+
+```{r}
+sqrt(nrow(titanic_train_predictor))
+```
+K optimum is 22
+
+```{r, warning=FALSE, message=FALSE}
+library(class)
+titanic_pred <- knn(train = titanic_train_predictor_scale,
+                   test = titanic_test_predictor_scale,
+                   cl = titanic_train_target,
+                   k = 20)
+titanic_pred
+```
+
+- Model evaluation with confusionMatrix from library caret
+
+```{r}
+library(caret)
+confusionMatrix(data = titanic_pred, reference = titanic_test_target, positive = '1')
+```
+KNN model has 72% accuracy, 72% sensitivity, 73% specificity, and 77% precision.
+
+# Conclusion
+
+Logistic model has 
+```{r}
+
+```
+
+- 78% accuracy
+- 78% sensitivity
+- 77% specificity
+- 83% precision
+
+
+KNN model has
+```{r}
+
+```
+
+- 72% accuracy
+- 72% sensitivity
+- 73% specificity
+- 77% precision
+
+> In this case, we focused on recall or sensitivity. So, Logistic Model better than KNN Model to predict passenger who survived from titanic sink disaster.
